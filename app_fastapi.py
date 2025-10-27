@@ -855,7 +855,7 @@ if __name__ == "__main__":
     import uvicorn
     
     # Get port from environment or use default
-    api_port = int(os.getenv("API_PORT"))  # Default to 8000 if not set
+    api_port = int(os.getenv("API_PORT", "8000"))  # Default to 8000 if not set
     
     # Run the FastAPI application with Uvicorn server
     # Use import string format for reload to work properly
