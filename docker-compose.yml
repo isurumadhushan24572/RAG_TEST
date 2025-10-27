@@ -1,0 +1,55 @@
+# Docker Compose configuration for Weaviate Vector Database
+# This file sets up Weaviate to run locally on Docker
+
+services:
+  # Weaviate Vector Database Service
+  weaviate:
+    # Using the official Weaviate Docker image (latest version)
+    image: semitechnologies/weaviate:latest
+    
+    # Container name for easy identification
+    container_name: weaviate_vectordb
+    
+    # Restart policy - always restart if container stops
+    restart: always
+    
+    # Port mapping - Maps container ports to host
+    # Port 8080: REST API - Access Weaviate at http://localhost:8080
+    # Port 50051: gRPC API - Used by Weaviate Python client v4
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    
+    # Environment variables for Weaviate configuration
+    environment:
+      # Query defaults - Set default limit for queries
+      QUERY_DEFAULTS_LIMIT: 25
+      
+      # Authentication - Disable authentication for local development
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      
+      # Persistence - Enable data persistence to disk
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      
+      # Default vectorizer module - Set to 'none' (we'll use local Python embeddings)
+      DEFAULT_VECTORIZER_MODULE: 'none'
+      
+      # Cluster configuration - Hostname for single-node setup
+      CLUSTER_HOSTNAME: 'node1'
+      
+      # Enable gRPC for Python client v4
+      ENABLE_GRPC: 'true'
+      
+      # gRPC port configuration
+      GRPC_PORT: '50051'
+    
+    # Volume mapping - Persist Weaviate data on host machine
+    # This ensures data survives container restarts
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+
+# Named volumes for data persistence
+volumes:
+  # Volume to store Weaviate vector database data
+  weaviate_data:
+    driver: local
