@@ -1,25 +1,20 @@
-"""
-FastAPI Application with Weaviate Vector Database Integration
-This application provides REST API endpoints to interact with Weaviate vector database.
-"""
-
 # ===================== IMPORTS =====================
 # Import required libraries for FastAPI and Weaviate integration
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager # For lifespan context manager
 import weaviate
 import weaviate.classes as wvc
 from weaviate.classes.config import Property, DataType
 import os
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List # For type hints
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel # For data validation
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
+from langchain_groq import ChatGroq
 
-# ===================== ENVIRONMENT SETUP =====================
-# Load environment variables from .env file
+
 load_dotenv()
 
 # ===================== WEAVIATE CLIENT CONFIGURATION =====================
@@ -54,6 +49,61 @@ class TicketResponse(BaseModel):
     message: str
     ticket_id: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
+
+class CollectionPropertyModel(BaseModel):
+    """Model for defining a property in a collection"""
+    name: str
+    data_type: str  # TEXT, NUMBER, BOOLEAN, DATE, etc.
+    description: Optional[str] = None
+
+class CreateCollectionModel(BaseModel):
+    """Model for creating a new collection"""
+    name: str
+    description: Optional[str] = None
+    properties: List[CollectionPropertyModel]
+    use_vectorizer: bool = False  # Whether to use automatic vectorization
+
+class TicketSubmissionModel(BaseModel):
+    """Model for submitting a new ticket to get AI-generated solution"""
+    title: str
+    description: str
+    category: str
+    severity: str = "Medium"
+    application: str = ""
+    affected_users: str = ""
+    environment: str = "Production"
+    collection_name: Optional[str] = None  # Collection to search for similar tickets
+
+class AITicketResponse(BaseModel):
+    """Response model for AI-generated ticket solution"""
+    success: bool
+    ticket_id: str
+    status: str  # "Resolved" or "Open"
+    reasoning: str  # Root cause analysis
+    solution: str  # Resolution steps
+    similar_tickets: List[Dict[str, Any]]  # Similar tickets found
+    message: str
+
+class TicketSubmissionModel(BaseModel):
+    """Model for submitting a new ticket to get AI-generated solution"""
+    title: str
+    description: str
+    category: str
+    severity: str = "Medium"
+    application: str = ""
+    affected_users: str = ""
+    environment: str = "Production"
+    collection_name: Optional[str] = None  # Collection to search for similar tickets
+
+class AITicketResponse(BaseModel):
+    """Response model for AI-generated ticket solution"""
+    success: bool
+    ticket_id: str
+    status: str  # "Resolved" or "Open"
+    reasoning: str  # Root cause analysis
+    solution: str  # Resolution steps
+    similar_tickets: List[Dict[str, Any]]  # Similar tickets found
+    message: str
 
 # ===================== LIFESPAN CONTEXT MANAGER =====================
 @asynccontextmanager
@@ -184,6 +234,175 @@ def generate_embedding(text: str) -> List[float]:
             detail="Embedding model not initialized"
         )
     return embedding_model.encode(text).tolist()
+
+def find_similar_tickets_in_weaviate(collection_name: str, query_text: str, k: int = 3, similarity_threshold: float = 0.85) -> List[Dict]:
+    """
+    Find similar tickets in Weaviate using vector similarity search.
+    
+    Args:
+        collection_name: Name of the collection to search
+        query_text: Query text to search for
+        k: Number of results to return
+        similarity_threshold: Minimum similarity score (0-1)
+        
+    Returns:
+        List of similar tickets with metadata and similarity scores
+    """
+    global weaviate_client
+    
+    if weaviate_client is None:
+        return []
+    
+    try:
+        # Check if collection exists
+        if not weaviate_client.collections.exists(collection_name):
+            return []
+        
+        # Get collection
+        collection = weaviate_client.collections.get(collection_name)
+        
+        # Generate embedding for query
+        query_embedding = generate_embedding(query_text)
+        
+        # Perform vector search
+        response = collection.query.near_vector(
+            near_vector=query_embedding,
+            limit=k,
+            return_metadata=wvc.query.MetadataQuery(distance=True, certainty=True)
+        )
+        
+        # Extract results with similarity filtering
+        similar_tickets = []
+        for obj in response.objects:
+            # Weaviate certainty is already 0-1 (cosine similarity)
+            similarity_score = obj.metadata.certainty
+            
+            # Only include tickets above threshold
+            if similarity_score >= similarity_threshold:
+                ticket_data = {
+                    "ticket_id": obj.properties.get("ticket_id", "N/A"),
+                    "title": obj.properties.get("title", ""),
+                    "description": obj.properties.get("description", ""),
+                    "solution": obj.properties.get("solution", ""),
+                    "reasoning": obj.properties.get("reasoning", ""),
+                    "category": obj.properties.get("category", ""),
+                    "severity": obj.properties.get("severity", ""),
+                    "similarity_score": float(similarity_score),
+                    "distance": float(obj.metadata.distance)
+                }
+                similar_tickets.append(ticket_data)
+        
+        return similar_tickets
+        
+    except Exception as e:
+        print(f"Error finding similar tickets: {e}")
+        return []
+
+def generate_solution_with_groq(ticket_data: Dict, similar_tickets: List[Dict]) -> tuple:
+    """
+    Generate AI solution using Groq's open-source LLM based on ticket data and similar tickets.
+    
+    Args:
+        ticket_data: Dictionary containing ticket information
+        similar_tickets: List of similar tickets from vector DB
+        
+    Returns:
+        Tuple of (reasoning, solution)
+    """
+    try:
+        # Get Groq API key from environment
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        
+        if not groq_api_key:
+            return ("Unable to generate root cause analysis. GROQ_API_KEY not found in environment variables.", 
+                    "Unable to generate resolution steps. Please set GROQ_API_KEY in your .env file.")
+        
+        # Initialize Groq LLM (open-source model) with explicit API key
+        llm = ChatGroq(
+            model="llama-3.3-70b-versatile",  # Open-source Llama model via Groq
+            temperature=0.0,
+            api_key=groq_api_key  # Explicitly pass the API key
+        )
+        
+        # Prepare context from similar tickets
+        context = ""
+        if similar_tickets:
+            context = "### Similar Past Cloud Application Issues (85%+ match confidence):\n\n"
+            for i, ticket in enumerate(similar_tickets, 1):
+                similarity_percent = ticket['similarity_score'] * 100
+                context += f"**Past Incident {i} (Match: {similarity_percent:.1f}%):**\n"
+                context += f"Title: {ticket['title']}\n"
+                context += f"Description: {ticket['description']}\n"
+                context += f"Solution: {ticket['solution']}\n"
+                context += f"Reasoning: {ticket['reasoning']}\n\n"
+        else:
+            context = "No similar past incidents found in the knowledge base (minimum 85% similarity required).\n\n"
+        
+        # Create prompt
+        prompt = f"""You are an expert cloud application support engineer. A support team member has received a new incident ticket from application monitoring or end-users.
+
+### Current Incident:
+**Title:** {ticket_data['title']}
+**Description:** {ticket_data['description']}
+**Category:** {ticket_data['category']}
+**Severity:** {ticket_data['severity']}
+**Application:** {ticket_data['application']}
+**Environment:** {ticket_data['environment']}
+**Affected Users:** {ticket_data['affected_users']}
+
+{context}
+
+Based on the current incident and similar past incidents (if any), please provide:
+
+1. **Root Cause Analysis:** Explain the likely root cause of this issue based on the symptoms. Consider cloud infrastructure, application code, database, API dependencies, or configuration issues.
+
+2. **Resolution Steps:** Provide clear, actionable steps to resolve this incident. Include:
+   - Immediate actions to mitigate impact
+   - Diagnostic commands/queries to verify the issue
+   - Fix implementation steps
+   - Verification steps to confirm resolution
+   - Preventive measures to avoid recurrence
+
+Be specific to cloud applications, microservices, APIs, databases, and modern DevOps practices. Reference similar past incidents when applicable.
+
+Format your response as:
+ROOT CAUSE: <your analysis here>
+RESOLUTION: <your step-by-step solution here>
+"""
+        
+        # Get response from Groq LLM
+        response = llm.invoke(prompt)
+        response_text = response.content.strip()
+        
+        # Parse reasoning and solution
+        reasoning = ""
+        solution = ""
+        
+        if "ROOT CAUSE:" in response_text and "RESOLUTION:" in response_text:
+            parts = response_text.split("RESOLUTION:")
+            reasoning = parts[0].replace("ROOT CAUSE:", "").strip()
+            solution = parts[1].strip()
+        else:
+            # Fallback if format is not followed
+            lines = response_text.split("\n", 1)
+            reasoning = lines[0] if len(lines) > 0 else "Analysis based on incident description."
+            solution = lines[1] if len(lines) > 1 else response_text
+        
+        return reasoning, solution
+    
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Provide specific error messages
+        if "API key" in error_msg.lower() or "authentication" in error_msg.lower():
+            return ("Unable to generate root cause analysis. API authentication failed. Please check your GROQ_API_KEY in .env file.", 
+                    "Unable to generate resolution steps. API authentication error - verify your Groq API key is correct.")
+        elif "rate limit" in error_msg.lower():
+            return ("Unable to generate root cause analysis. Rate limit exceeded.", 
+                    "Unable to generate resolution steps. Try again in a moment or switch to llama-3.1-8b-instant model for higher rate limits.")
+        else:
+            return (f"Unable to generate root cause analysis. Error: {error_msg}", 
+                    f"Unable to generate resolution steps. Please investigate manually. Error: {error_msg}")
 
 # ===================== ROOT ENDPOINT =====================
 @app.get("/", tags=["Health Check"])
@@ -386,14 +605,203 @@ async def list_collections():
             detail=f"Error listing collections: {str(e)}"
         )
 
+# ===================== CREATE COLLECTION ENDPOINT =====================
+@app.post("/api/v1/collections", tags=["Collections"])
+async def create_collection(collection_model: CreateCollectionModel):
+    """
+    Create a new collection in Weaviate with custom schema.
+    
+    Args:
+        collection_model: CreateCollectionModel with collection name, description, and properties
+        
+    Returns:
+        Dict: Success status and collection details
+        
+    Raises:
+        HTTPException: If collection creation fails or already exists
+    """
+    global weaviate_client
+    
+    try:
+        # Check if Weaviate client is initialized
+        if weaviate_client is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Weaviate client not initialized. Check if Weaviate is running."
+            )
+        
+        # Check if collection already exists
+        if weaviate_client.collections.exists(collection_model.name):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Collection '{collection_model.name}' already exists"
+            )
+        
+        # Map string data types to Weaviate DataType enums
+        data_type_mapping = {
+            "TEXT": DataType.TEXT,
+            "NUMBER": DataType.NUMBER,
+            "INT": DataType.INT,
+            "BOOLEAN": DataType.BOOL,
+            "DATE": DataType.DATE,
+            "UUID": DataType.UUID,
+            "TEXT_ARRAY": DataType.TEXT_ARRAY,
+            "NUMBER_ARRAY": DataType.NUMBER_ARRAY,
+            "INT_ARRAY": DataType.INT_ARRAY,
+            "BOOLEAN_ARRAY": DataType.BOOL_ARRAY,
+            "DATE_ARRAY": DataType.DATE_ARRAY,
+            "UUID_ARRAY": DataType.UUID_ARRAY,
+        }
+        
+        # Build properties list
+        properties = []
+        for prop in collection_model.properties:
+            # Validate data type
+            data_type_upper = prop.data_type.upper()
+            if data_type_upper not in data_type_mapping:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid data type '{prop.data_type}'. Supported types: {', '.join(data_type_mapping.keys())}"
+                )
+            
+            # Create property
+            properties.append(
+                Property(
+                    name=prop.name,
+                    data_type=data_type_mapping[data_type_upper],
+                    description=prop.description or f"Property: {prop.name}"
+                )
+            )
+        
+        # Create collection with or without vectorizer
+        vectorizer_config = wvc.config.Configure.Vectorizer.none() if not collection_model.use_vectorizer else None
+        
+        weaviate_client.collections.create(
+            name=collection_model.name,
+            description=collection_model.description or f"Custom collection: {collection_model.name}",
+            vectorizer_config=vectorizer_config,
+            properties=properties
+        )
+        
+        return {
+            "success": True,
+            "message": f"Collection '{collection_model.name}' created successfully",
+            "collection": {
+                "name": collection_model.name,
+                "description": collection_model.description,
+                "properties_count": len(properties),
+                "vectorizer": "manual/local" if not collection_model.use_vectorizer else "automatic",
+                "properties": [
+                    {
+                        "name": prop.name,
+                        "data_type": prop.data_type,
+                        "description": prop.description
+                    } for prop in collection_model.properties
+                ]
+            }
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Handle any other errors during collection creation
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating collection: {str(e)}"
+        )
+
+# ===================== CREATE SIMPLE COLLECTION ENDPOINT =====================
+@app.post("/api/v1/collections/simple", tags=["Collections"])
+async def create_simple_collection(collection_name: str):
+    """
+    Create a new collection with default ticket schema by just providing a name.
+    This is a simplified endpoint that creates a collection with predefined ticket properties.
+    
+    Args:
+        collection_name: Name of the collection to create (query parameter)
+        
+    Returns:
+        Dict: Success status and collection details
+        
+    Raises:
+        HTTPException: If collection creation fails or already exists
+    """
+    global weaviate_client
+    
+    try:
+        # Check if Weaviate client is initialized
+        if weaviate_client is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Weaviate client not initialized. Check if Weaviate is running."
+            )
+        
+        # Check if collection already exists
+        if weaviate_client.collections.exists(collection_name):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Collection '{collection_name}' already exists"
+            )
+        
+        # Create collection with default ticket schema
+        # Using the same schema as SupportTickets for consistency
+        weaviate_client.collections.create(
+            name=collection_name,
+            description=f"Support ticket collection: {collection_name}",
+            vectorizer_config=wvc.config.Configure.Vectorizer.none(),  # Manual/local embeddings
+            properties=[
+                Property(name="ticket_id", data_type=DataType.TEXT, description="Unique ticket identifier"),
+                Property(name="title", data_type=DataType.TEXT, description="Ticket title/summary"),
+                Property(name="description", data_type=DataType.TEXT, description="Detailed problem description"),
+                Property(name="category", data_type=DataType.TEXT, description="Issue category"),
+                Property(name="status", data_type=DataType.TEXT, description="Ticket status (Open/Resolved)"),
+                Property(name="severity", data_type=DataType.TEXT, description="Severity level"),
+                Property(name="application", data_type=DataType.TEXT, description="Affected application/service"),
+                Property(name="affected_users", data_type=DataType.TEXT, description="Impact scope"),
+                Property(name="environment", data_type=DataType.TEXT, description="Environment (Production/Staging/etc)"),
+                Property(name="solution", data_type=DataType.TEXT, description="Resolution steps"),
+                Property(name="reasoning", data_type=DataType.TEXT, description="Root cause analysis"),
+                Property(name="timestamp", data_type=DataType.TEXT, description="Ticket creation timestamp"),
+            ]
+        )
+        
+        return {
+            "success": True,
+            "message": f"Collection '{collection_name}' created successfully with default ticket schema",
+            "collection": {
+                "name": collection_name,
+                "description": f"Support ticket collection: {collection_name}",
+                "schema_type": "default_ticket_schema",
+                "vectorizer": "manual/local (sentence-transformers)",
+                "properties_count": 12,
+                "properties": [
+                    "ticket_id", "title", "description", "category", "status", 
+                    "severity", "application", "affected_users", "environment", 
+                    "solution", "reasoning", "timestamp"
+                ]
+            }
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Handle any other errors during collection creation
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating collection: {str(e)}"
+        )
+
 # ===================== TICKET UPLOAD ENDPOINT =====================
 @app.post("/api/v1/tickets", tags=["Tickets"], response_model=TicketResponse)
-async def upload_ticket(ticket: TicketModel):
+async def upload_ticket(ticket: TicketModel, collection_name: Optional[str] = None):
     """
-    Upload a single ticket to Weaviate SupportTickets collection with local embeddings.
+    Upload a single ticket to Weaviate collection with local embeddings.
     
     Args:
         ticket: TicketModel with all required fields
+        collection_name: Name of the collection to upload to (default: SupportTickets)
         
     Returns:
         TicketResponse: Success status and ticket details
@@ -408,9 +816,19 @@ async def upload_ticket(ticket: TicketModel):
             detail="Weaviate vector database is not connected. Please check connection."
         )
     
+    # Use default collection name if not provided
+    target_collection = collection_name or TICKETS_COLLECTION_NAME
+    
     try:
-        # Get the SupportTickets collection
-        tickets_collection = weaviate_client.collections.get(TICKETS_COLLECTION_NAME)
+        # Check if collection exists
+        if not weaviate_client.collections.exists(target_collection):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Collection '{target_collection}' does not exist"
+            )
+        
+        # Get the target collection
+        tickets_collection = weaviate_client.collections.get(target_collection)
         
         # Prepare ticket data for Weaviate
         ticket_data = {
@@ -440,9 +858,9 @@ async def upload_ticket(ticket: TicketModel):
         
         return TicketResponse(
             success=True,
-            message=f"Ticket {ticket.ticket_id} uploaded successfully with embedding",
+            message=f"Ticket {ticket.ticket_id} uploaded successfully to collection '{target_collection}' with embedding",
             ticket_id=ticket.ticket_id,
-            data={"uuid": str(uuid), "ticket": ticket_data}
+            data={"uuid": str(uuid), "ticket": ticket_data, "collection": target_collection}
         )
         
     except Exception as e:
@@ -453,12 +871,13 @@ async def upload_ticket(ticket: TicketModel):
 
 # ===================== BATCH TICKET UPLOAD ENDPOINT =====================
 @app.post("/api/v1/tickets/batch", tags=["Tickets"])
-async def upload_tickets_batch(tickets: List[TicketModel]):
+async def upload_tickets_batch(tickets: List[TicketModel], collection_name: Optional[str] = None):
     """
-    Upload multiple tickets to Weaviate SupportTickets collection in batch with local embeddings.
+    Upload multiple tickets to Weaviate collection in batch with local embeddings.
     
     Args:
         tickets: List of TicketModel objects
+        collection_name: Name of the collection to upload to (default: SupportTickets)
         
     Returns:
         Dict: Success status, count, and details
@@ -473,9 +892,19 @@ async def upload_tickets_batch(tickets: List[TicketModel]):
             detail="Weaviate vector database is not connected. Please check connection."
         )
     
+    # Use default collection name if not provided
+    target_collection = collection_name or TICKETS_COLLECTION_NAME
+    
     try:
-        # Get the SupportTickets collection
-        tickets_collection = weaviate_client.collections.get(TICKETS_COLLECTION_NAME)
+        # Check if collection exists
+        if not weaviate_client.collections.exists(target_collection):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Collection '{target_collection}' does not exist"
+            )
+        
+        # Get the target collection
+        tickets_collection = weaviate_client.collections.get(target_collection)
         
         # Prepare batch data
         uploaded_count = 0
@@ -519,7 +948,8 @@ async def upload_tickets_batch(tickets: List[TicketModel]):
         
         return {
             "success": True,
-            "message": f"Batch upload completed with local embeddings",
+            "message": f"Batch upload completed to collection '{target_collection}' with local embeddings",
+            "collection": target_collection,
             "total_tickets": len(tickets),
             "uploaded": uploaded_count,
             "failed": len(failed_tickets),
@@ -532,15 +962,159 @@ async def upload_tickets_batch(tickets: List[TicketModel]):
             detail=f"Error in batch upload: {str(e)}"
         )
 
+# ===================== SUBMIT TICKET WITH AI SOLUTION ENDPOINT =====================
+@app.post("/api/v1/tickets/submit-with-ai", tags=["Tickets"], response_model=AITicketResponse)
+async def submit_ticket_with_ai_solution(ticket: TicketSubmissionModel):
+    """
+    Submit a new ticket and get AI-generated solution using Groq's open-source LLM.
+    This endpoint uses RAG (Retrieval-Augmented Generation) to find similar tickets and generate solutions.
+    
+    Workflow:
+    1. Search vector DB for similar past incidents (85% similarity threshold)
+    2. Generate AI solution using Groq's Llama model based on similar tickets
+    3. Save ticket to the specified collection with AI-generated solution
+    4. Return reasoning, solution, and similar tickets found
+    
+    Args:
+        ticket: TicketSubmissionModel with incident details
+        
+    Returns:
+        AITicketResponse: Ticket ID, status, AI reasoning, solution, and similar tickets
+        
+    Raises:
+        HTTPException: If Weaviate is not connected or processing fails
+    """
+    global weaviate_client
+    
+    # Check if Weaviate client is connected
+    if weaviate_client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Weaviate vector database is not connected. Please check connection."
+        )
+    
+    try:
+        # Use default collection name if not provided
+        target_collection = ticket.collection_name or TICKETS_COLLECTION_NAME
+        
+        # Check if collection exists
+        if not weaviate_client.collections.exists(target_collection):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Collection '{target_collection}' does not exist. Create it first."
+            )
+        
+        # Step 1: Search for similar tickets in vector DB
+        query_text = f"{ticket.title} {ticket.description} {ticket.application}"
+        similar_tickets = find_similar_tickets_in_weaviate(
+            collection_name=target_collection,
+            query_text=query_text,
+            k=3,
+            similarity_threshold=0.85
+        )
+        
+        # Step 2: Prepare ticket data for AI
+        ticket_data = {
+            "title": ticket.title,
+            "description": ticket.description,
+            "category": ticket.category,
+            "severity": ticket.severity,
+            "application": ticket.application,
+            "affected_users": ticket.affected_users,
+            "environment": ticket.environment
+        }
+        
+        # Step 3: Generate AI solution using Groq's open-source LLM
+        reasoning, solution = generate_solution_with_groq(ticket_data, similar_tickets)
+        
+        # Step 4: Determine ticket status
+        has_error = reasoning.startswith("Unable to generate") or solution.startswith("Unable to generate")
+        has_similar_tickets = len(similar_tickets) > 0
+        
+        if has_error:
+            status_value = "Open"
+            message = "AI generation failed. Ticket marked as Open for manual review."
+        elif not has_similar_tickets:
+            status_value = "Open"
+            message = "No similar incidents found (85% threshold). Ticket marked as Open for expert validation."
+        else:
+            status_value = "Resolved"
+            message = f"AI-generated solution based on {len(similar_tickets)} similar incident(s). Ticket marked as Resolved."
+        
+        # Step 5: Generate ticket ID and save to collection
+        collection = weaviate_client.collections.get(target_collection)
+        count_result = collection.aggregate.over_all(total_count=True)
+        ticket_count = count_result.total_count
+        ticket_id = f"TKT-{ticket_count + 1:04d}"
+        
+        # Prepare full ticket data with AI solution
+        full_ticket_data = {
+            "ticket_id": ticket_id,
+            "title": ticket.title,
+            "description": ticket.description,
+            "category": ticket.category,
+            "status": status_value,
+            "severity": ticket.severity,
+            "application": ticket.application,
+            "affected_users": ticket.affected_users,
+            "environment": ticket.environment,
+            "solution": solution,
+            "reasoning": reasoning,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        # Generate embedding from ticket content
+        text_to_embed = f"{ticket.title} {ticket.description} {solution}"
+        embedding = generate_embedding(text_to_embed)
+        
+        # Insert ticket into Weaviate with embedding
+        uuid = collection.data.insert(
+            properties=full_ticket_data,
+            vector=embedding
+        )
+        
+        # Step 6: Format similar tickets for response
+        similar_tickets_response = [
+            {
+                "ticket_id": st["ticket_id"],
+                "title": st["title"],
+                "similarity_score": st["similarity_score"],
+                "similarity_percent": f"{st['similarity_score'] * 100:.1f}%",
+                "category": st["category"],
+                "severity": st["severity"]
+            }
+            for st in similar_tickets
+        ]
+        
+        # Return response
+        return AITicketResponse(
+            success=True,
+            ticket_id=ticket_id,
+            status=status_value,
+            reasoning=reasoning,
+            solution=solution,
+            similar_tickets=similar_tickets_response,
+            message=message
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing ticket submission: {str(e)}"
+        )
+
 # ===================== GET ALL TICKETS ENDPOINT =====================
 @app.get("/api/v1/tickets", tags=["Tickets"])
-async def get_all_tickets(limit: int = 100, offset: int = 0):
+async def get_all_tickets(limit: int = 100, offset: int = 0, collection_name: Optional[str] = None):
     """
-    Retrieve all tickets from Weaviate SupportTickets collection.
+    Retrieve all tickets from Weaviate collection.
     
     Args:
         limit: Maximum number of tickets to return (default 100)
         offset: Number of tickets to skip (default 0)
+        collection_name: Name of the collection to query (default: SupportTickets)
         
     Returns:
         Dict: List of tickets and metadata
@@ -555,9 +1129,19 @@ async def get_all_tickets(limit: int = 100, offset: int = 0):
             detail="Weaviate vector database is not connected. Please check connection."
         )
     
+    # Use default collection name if not provided
+    target_collection = collection_name or TICKETS_COLLECTION_NAME
+    
     try:
-        # Get the SupportTickets collection
-        tickets_collection = weaviate_client.collections.get(TICKETS_COLLECTION_NAME)
+        # Check if collection exists
+        if not weaviate_client.collections.exists(target_collection):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Collection '{target_collection}' does not exist"
+            )
+        
+        # Get the target collection
+        tickets_collection = weaviate_client.collections.get(target_collection)
         
         # Query all tickets with limit and offset
         response = tickets_collection.query.fetch_objects(
@@ -578,6 +1162,7 @@ async def get_all_tickets(limit: int = 100, offset: int = 0):
         
         return {
             "success": True,
+            "collection": target_collection,
             "total_count": total_count,
             "returned_count": len(tickets_list),
             "limit": limit,
@@ -591,135 +1176,16 @@ async def get_all_tickets(limit: int = 100, offset: int = 0):
             detail=f"Error retrieving tickets: {str(e)}"
         )
 
-# ===================== GET TICKET BY ID ENDPOINT =====================
-@app.get("/api/v1/tickets/{ticket_id}", tags=["Tickets"])
-async def get_ticket_by_id(ticket_id: str):
-    """
-    Retrieve a specific ticket by its ticket_id.
-    
-    Args:
-        ticket_id: Unique ticket identifier (e.g., TKT-0001)
-        
-    Returns:
-        Dict: Ticket data
-        
-    Raises:
-        HTTPException: If ticket not found or query fails
-    """
-    # Check if Weaviate client is connected
-    if weaviate_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Weaviate vector database is not connected. Please check connection."
-        )
-    
-    try:
-        # Get the SupportTickets collection
-        tickets_collection = weaviate_client.collections.get(TICKETS_COLLECTION_NAME)
-        
-        # Query for specific ticket_id
-        response = tickets_collection.query.fetch_objects(
-            filters=wvc.query.Filter.by_property("ticket_id").equal(ticket_id),
-            limit=1
-        )
-        
-        if len(response.objects) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Ticket {ticket_id} not found"
-            )
-        
-        # Extract ticket data
-        obj = response.objects[0]
-        ticket_data = obj.properties
-        ticket_data["uuid"] = str(obj.uuid)
-        
-        return {
-            "success": True,
-            "ticket": ticket_data
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving ticket: {str(e)}"
-        )
-
-# ===================== DELETE TICKET BY ID ENDPOINT =====================
-@app.delete("/api/v1/tickets/{ticket_id}", tags=["Tickets"])
-async def delete_ticket_by_id(ticket_id: str):
-    """
-    Delete a specific ticket from Weaviate by its ticket_id.
-    
-    Args:
-        ticket_id: Unique ticket identifier (e.g., TKT-0001)
-        
-    Returns:
-        Dict: Success status and deletion details
-        
-    Raises:
-        HTTPException: If ticket not found or deletion fails
-    """
-    # Check if Weaviate client is connected
-    if weaviate_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Weaviate vector database is not connected. Please check connection."
-        )
-    
-    try:
-        # Get the SupportTickets collection
-        tickets_collection = weaviate_client.collections.get(TICKETS_COLLECTION_NAME)
-        
-        # First, find the ticket to get its UUID
-        response = tickets_collection.query.fetch_objects(
-            filters=wvc.query.Filter.by_property("ticket_id").equal(ticket_id),
-            limit=1
-        )
-        
-        # Check if ticket exists
-        if len(response.objects) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Ticket '{ticket_id}' not found in database"
-            )
-        
-        # Get the UUID of the ticket to delete
-        ticket_uuid = response.objects[0].uuid
-        ticket_data = response.objects[0].properties
-        
-        # Delete the ticket by UUID
-        tickets_collection.data.delete_by_id(ticket_uuid)
-        
-        return {
-            "success": True,
-            "message": f"Ticket '{ticket_id}' deleted successfully",
-            "deleted_ticket": {
-                "ticket_id": ticket_id,
-                "uuid": str(ticket_uuid),
-                "title": ticket_data.get("title", "N/A")
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting ticket: {str(e)}"
-        )
-
 # ===================== SEARCH TICKETS ENDPOINT =====================
 @app.get("/api/v1/tickets/search", tags=["Tickets"])
-async def search_tickets(query: str, limit: int = 5):
+async def search_tickets(query: str, limit: int = 5, collection_name: Optional[str] = None):
     """
     Search for similar tickets using vector similarity search with local embeddings.
     
     Args:
         query: Search query (natural language description)
         limit: Maximum number of results (default 5)
+        collection_name: Name of the collection to search in (default: SupportTickets)
         
     Returns:
         Dict: List of similar tickets with similarity scores
@@ -734,9 +1200,19 @@ async def search_tickets(query: str, limit: int = 5):
             detail="Weaviate vector database is not connected. Please check connection."
         )
     
+    # Use default collection name if not provided
+    target_collection = collection_name or TICKETS_COLLECTION_NAME
+    
     try:
-        # Get the SupportTickets collection
-        tickets_collection = weaviate_client.collections.get(TICKETS_COLLECTION_NAME)
+        # Check if collection exists
+        if not weaviate_client.collections.exists(target_collection):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Collection '{target_collection}' does not exist"
+            )
+        
+        # Get the target collection
+        tickets_collection = weaviate_client.collections.get(target_collection)
         
         # Generate embedding from search query using local model
         query_embedding = generate_embedding(query)
@@ -760,6 +1236,7 @@ async def search_tickets(query: str, limit: int = 5):
         
         return {
             "success": True,
+            "collection": target_collection,
             "query": query,
             "results_count": len(results),
             "results": results
@@ -769,6 +1246,150 @@ async def search_tickets(query: str, limit: int = 5):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error searching tickets: {str(e)}"
+        )
+
+# ===================== GET TICKET BY ID ENDPOINT =====================
+@app.get("/api/v1/tickets/{ticket_id}", tags=["Tickets"])
+async def get_ticket_by_id(ticket_id: str, collection_name: Optional[str] = None):
+    """
+    Retrieve a specific ticket by its ticket_id.
+    
+    Args:
+        ticket_id: Unique ticket identifier (e.g., TKT-0001)
+        collection_name: Name of the collection to search in (default: SupportTickets)
+        
+    Returns:
+        Dict: Ticket data
+        
+    Raises:
+        HTTPException: If ticket not found or query fails
+    """
+    # Check if Weaviate client is connected
+    if weaviate_client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Weaviate vector database is not connected. Please check connection."
+        )
+    
+    # Use default collection name if not provided
+    target_collection = collection_name or TICKETS_COLLECTION_NAME
+    
+    try:
+        # Check if collection exists
+        if not weaviate_client.collections.exists(target_collection):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Collection '{target_collection}' does not exist"
+            )
+        
+        # Get the target collection
+        tickets_collection = weaviate_client.collections.get(target_collection)
+        
+        # Query for specific ticket_id
+        response = tickets_collection.query.fetch_objects(
+            filters=wvc.query.Filter.by_property("ticket_id").equal(ticket_id),
+            limit=1
+        )
+        
+        if len(response.objects) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Ticket {ticket_id} not found in collection '{target_collection}'"
+            )
+        
+        # Extract ticket data
+        obj = response.objects[0]
+        ticket_data = obj.properties
+        ticket_data["uuid"] = str(obj.uuid)
+        
+        return {
+            "success": True,
+            "collection": target_collection,
+            "ticket": ticket_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving ticket: {str(e)}"
+        )
+
+# ===================== DELETE TICKET BY ID ENDPOINT =====================
+@app.delete("/api/v1/tickets/{ticket_id}", tags=["Tickets"])
+async def delete_ticket_by_id(ticket_id: str, collection_name: Optional[str] = None):
+    """
+    Delete a specific ticket from Weaviate by its ticket_id.
+    
+    Args:
+        ticket_id: Unique ticket identifier (e.g., TKT-0001)
+        collection_name: Name of the collection to delete from (default: SupportTickets)
+        
+    Returns:
+        Dict: Success status and deletion details
+        
+    Raises:
+        HTTPException: If ticket not found or deletion fails
+    """
+    # Check if Weaviate client is connected
+    if weaviate_client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Weaviate vector database is not connected. Please check connection."
+        )
+    
+    # Use default collection name if not provided
+    target_collection = collection_name or TICKETS_COLLECTION_NAME
+    
+    try:
+        # Check if collection exists
+        if not weaviate_client.collections.exists(target_collection):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Collection '{target_collection}' does not exist"
+            )
+        
+        # Get the target collection
+        tickets_collection = weaviate_client.collections.get(target_collection)
+        
+        # First, find the ticket to get its UUID
+        response = tickets_collection.query.fetch_objects(
+            filters=wvc.query.Filter.by_property("ticket_id").equal(ticket_id),
+            limit=1
+        )
+        
+        # Check if ticket exists
+        if len(response.objects) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Ticket '{ticket_id}' not found in collection '{target_collection}'"
+            )
+        
+        # Get the UUID of the ticket to delete
+        ticket_uuid = response.objects[0].uuid
+        ticket_data = response.objects[0].properties
+        
+        # Delete the ticket by UUID
+        tickets_collection.data.delete_by_id(ticket_uuid)
+        
+        return {
+            "success": True,
+            "message": f"Ticket '{ticket_id}' deleted successfully from collection '{target_collection}'",
+            "collection": target_collection,
+            "deleted_ticket": {
+                "ticket_id": ticket_id,
+                "uuid": str(ticket_uuid),
+                "title": ticket_data.get("title", "N/A")
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting ticket: {str(e)}"
         )
 
 # ===================== DELETE COLLECTION ENDPOINT =====================
