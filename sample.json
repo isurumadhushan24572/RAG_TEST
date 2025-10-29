@@ -1,0 +1,202 @@
+[
+  {
+    "title": "Database Connection Timeout in Production",
+    "description": "Multiple users reporting slow page loads and timeout errors. Database connection pool appears to be exhausted. Error logs show 'Connection timeout after 30 seconds' messages. Started approximately 2 hours ago during peak traffic hours.",
+    "category": "Database",
+    "severity": "Critical",
+    "application": "User Management Service",
+    "affected_users": "All users in US-East region",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Login API Returns 401 Unauthorized",
+    "description": "Users unable to authenticate. Login API consistently returning 401 unauthorized errors even with valid credentials. JWT token validation appears to be failing. Auth service logs show 'Invalid signature' errors.",
+    "category": "Authentication",
+    "severity": "Critical",
+    "application": "Authentication Service",
+    "affected_users": "All users",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Payment Gateway Integration Failure",
+    "description": "Payment transactions failing with 'Gateway unavailable' error. Third-party payment API returning 503 Service Unavailable. Approximately 150 failed transactions in the last hour. Users seeing error message at checkout.",
+    "category": "Integration",
+    "severity": "High",
+    "application": "Payment Service",
+    "affected_users": "All customers attempting purchases",
+    "environment": "Production",
+    "collection_name": "Test_Tickets"
+  },
+  {
+    "title": "Memory Leak in Order Processing Service",
+    "description": "Order processing service experiencing increasing memory usage over time. Service crashes after 4-6 hours of operation. Heap dump analysis shows unreleased object references. Requires manual restart to resolve.",
+    "category": "Performance",
+    "severity": "High",
+    "application": "Order Processing Service",
+    "affected_users": "Backend operations team",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "API Rate Limiting Not Working",
+    "description": "Rate limiting configuration appears broken. Some clients exceeding allowed request limits without being throttled. Redis rate limit counter not incrementing properly. May lead to API abuse.",
+    "category": "API Issues",
+    "severity": "Medium",
+    "application": "API Gateway",
+    "affected_users": "API consumers",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Email Notification Queue Backup",
+    "description": "Email notification queue has over 50,000 pending messages. Message processing rate significantly slower than expected. RabbitMQ consumer lag increasing. Users not receiving transactional emails.",
+    "category": "Backend Service",
+    "severity": "High",
+    "application": "Notification Service",
+    "affected_users": "All users expecting email notifications",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Dashboard Loading Extremely Slow",
+    "description": "User dashboard taking 15-20 seconds to load. Network waterfall shows multiple slow API calls. Database queries not optimized. Frontend bundle size appears larger than expected at 3.5MB.",
+    "category": "Performance",
+    "severity": "Medium",
+    "application": "Web Dashboard",
+    "affected_users": "Dashboard users",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "File Upload Failing for Large Files",
+    "description": "Users unable to upload files larger than 10MB. Upload progress reaches 100% but then fails with 'Request Entity Too Large' error. Nginx configuration may need adjustment. Works fine in staging environment.",
+    "category": "UI/Frontend",
+    "severity": "Medium",
+    "application": "Document Management System",
+    "affected_users": "Users uploading large documents",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Kubernetes Pod Crash Loop",
+    "description": "Inventory service pods constantly restarting. Pod crash loop detected with exit code 137 (OOMKilled). Memory limits may be too low. Service intermittently unavailable during restarts.",
+    "category": "Deployment",
+    "severity": "High",
+    "application": "Inventory Service",
+    "affected_users": "Internal operations",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Search Functionality Returns No Results",
+    "description": "Product search returning zero results for common queries. Elasticsearch cluster health status shows yellow. Index appears to be corrupted or out of sync. Last successful index rebuild was 3 days ago.",
+    "category": "API Issues",
+    "severity": "Critical",
+    "application": "Search Service",
+    "affected_users": "All users using search feature",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "SSL Certificate Expiring Soon",
+    "description": "Production SSL certificate set to expire in 5 days. Auto-renewal process failed last night. Certificate validation showing errors. Need to manually renew to avoid service disruption.",
+    "category": "Other",
+    "severity": "High",
+    "application": "API Gateway",
+    "affected_users": "All API users",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Broken Image Links in Product Catalog",
+    "description": "Product images showing as broken links. CDN returning 404 errors for image URLs. S3 bucket policy may have changed. Affects approximately 30% of product listings.",
+    "category": "UI/Frontend",
+    "severity": "Medium",
+    "application": "Product Catalog",
+    "affected_users": "Customers browsing products",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Staging Environment Database Connection Issues",
+    "description": "Cannot connect to staging database from application servers. Connection string appears correct but getting 'Connection refused' errors. Database server may be down or firewall rules changed.",
+    "category": "Database",
+    "severity": "Low",
+    "application": "All Services",
+    "affected_users": "Development team",
+    "environment": "Staging",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Mobile App Crashes on Android 14",
+    "description": "Mobile application crashing on startup for Android 14 devices. Crash logs show NullPointerException in initialization code. Works fine on Android 13 and below. Affects latest app version 3.2.1.",
+    "category": "UI/Frontend",
+    "severity": "High",
+    "application": "Mobile App",
+    "affected_users": "Android 14 users (approximately 15% of mobile users)",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Webhook Delivery Failures",
+    "description": "Outgoing webhooks failing to deliver to customer endpoints. Webhook retry queue growing rapidly. Timeout errors after 5 seconds. Some customer integrations breaking due to missed events.",
+    "category": "Integration",
+    "severity": "Medium",
+    "application": "Webhook Service",
+    "affected_users": "Third-party integrations",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Cache Invalidation Not Working",
+    "description": "Redis cache not invalidating properly after data updates. Users seeing stale data for up to 10 minutes. Cache TTL settings appear correct. May be issue with cache key pattern matching.",
+    "category": "Backend Service",
+    "severity": "Medium",
+    "application": "Caching Layer",
+    "affected_users": "All users",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "GraphQL API Query Timeout",
+    "description": "Complex GraphQL queries timing out after 30 seconds. Query depth appears too high causing N+1 database queries. DataLoader implementation may not be working correctly. Simple queries work fine.",
+    "category": "API Issues",
+    "severity": "Medium",
+    "application": "GraphQL API",
+    "affected_users": "API consumers making complex queries",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Scheduled Reports Not Generating",
+    "description": "Automated daily reports failing to generate since yesterday. Cron job appears to be running but no output files created. Job logs show 'Permission denied' errors when writing to S3.",
+    "category": "Backend Service",
+    "severity": "Low",
+    "application": "Reporting Service",
+    "affected_users": "Business intelligence team",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Two-Factor Authentication Codes Not Arriving",
+    "description": "Users not receiving 2FA SMS codes. SMS gateway API responding normally but messages not delivered. Carrier delivery reports showing delays of 5-10 minutes. Affecting user login experience.",
+    "category": "Authentication",
+    "severity": "High",
+    "application": "SMS Service",
+    "affected_users": "Users with SMS-based 2FA enabled",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  },
+  {
+    "title": "Docker Container Image Pull Failures",
+    "description": "Deployment pipeline failing at image pull step. Docker registry returning 'TLS handshake timeout' errors. May be network connectivity issue to container registry. Blocking new deployments.",
+    "category": "Deployment",
+    "severity": "Critical",
+    "application": "CI/CD Pipeline",
+    "affected_users": "DevOps team",
+    "environment": "Production",
+    "collection_name": "SupportTickets"
+  }
+]
