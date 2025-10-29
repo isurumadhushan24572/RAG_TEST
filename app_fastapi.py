@@ -927,7 +927,6 @@ async def upload_tickets_batch(tickets: List[TicketModel], collection_name: Opti
 @app.post("/api/v1/tickets/submit-user-input", tags=["Tickets"], response_model=AITicketResponse)
 async def submit_ticket_with_ai_solution(ticket: TicketSubmissionModel):
     """
-    Get AI-generated solution for a ticket using Groq's open-source LLM.
     This endpoint uses RAG (Retrieval-Augmented Generation) to find similar tickets and generate solutions.
     
     Workflow:
