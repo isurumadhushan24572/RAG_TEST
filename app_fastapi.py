@@ -116,26 +116,24 @@ async def lifespan(app: FastAPI):
     
     # STARTUP: Initialize Weaviate connection and embedding model
     try:
-        # Load local embedding model (downloads on first use, ~80MB)
+       
         print("📦 Loading local embedding model (sentence-transformers/all-MiniLM-L6-v2)...")
         embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
         print("✅ Embedding model loaded successfully")
         
         # Connect to local Weaviate instance running on Docker
         weaviate_client = weaviate.connect_to_local(
-            host=os.getenv("WEAVIATE_HOST", "localhost"),  # Docker container host (default: localhost)
-            port=int(os.getenv("WEAVIATE_PORT", "8080")),  # Weaviate default port (default: 8080)
-            grpc_port=int(os.getenv("WEAVIATE_GRPC_PORT", "50051")),  # gRPC port for v4 client (default: 50051)
+            host=os.getenv("WEAVIATE_HOST"), # Docker container host (default: localhost)
+            port=int(os.getenv("WEAVIATE_PORT")),  # Weaviate default port (default: 8080)
+            grpc_port=int(os.getenv("WEAVIATE_GRPC_PORT")),  # gRPC port for v4 client (default: 50051)
         )
         
         # Verify connection is ready
         if weaviate_client.is_ready():
             print("✅ Successfully connected to Weaviate vector database")
-            print(f"📊 Weaviate is ready: {weaviate_client.is_ready()}")
-            
+
             # ========== SMART COLLECTION HANDLING ==========
             # Check if SupportTickets collection already exists
-            # This prevents errors when restarting the application
             # Collections persist in Weaviate even after app shutdown
             try:
                 # Check if collection exists in Weaviate
@@ -144,15 +142,6 @@ async def lifespan(app: FastAPI):
                 if collection_exists:
                     # Collection already exists - skip creation and reuse existing data
                     print(f"✅ Collection '{TICKETS_COLLECTION_NAME}' already exists (using existing collection)")
-                    
-                    # Get collection info to verify schema and show current data
-                    try:
-                        collection = weaviate_client.collections.get(TICKETS_COLLECTION_NAME)
-                        count_result = collection.aggregate.over_all(total_count=True)
-                        ticket_count = count_result.total_count
-                        print(f"📊 Existing collection has {ticket_count} ticket(s)")
-                    except Exception as count_error:
-                        print(f"⚠️ Could not get ticket count: {str(count_error)}")
                     
                 else:
                     # Collection doesn't exist - create new one
@@ -218,15 +207,7 @@ app = FastAPI(
 
 # ===================== HELPER FUNCTIONS =====================
 def generate_embedding(text: str) -> List[float]:
-    """
-    Generate embedding vector for text using local sentence-transformers model.
-    
-    Args:
-        text: Text to embed
-        
-    Returns:
-        List of floats representing the embedding vector
-    """
+
     global embedding_model
     if embedding_model is None:
         raise HTTPException(
@@ -287,8 +268,7 @@ def find_similar_tickets_in_weaviate(collection_name: str, query_text: str, k: i
                     "reasoning": obj.properties.get("reasoning", ""),
                     "category": obj.properties.get("category", ""),
                     "severity": obj.properties.get("severity", ""),
-                    "similarity_score": float(similarity_score),
-                    "distance": float(obj.metadata.distance)
+                    "similarity_score": float(similarity_score)
                 }
                 similar_tickets.append(ticket_data)
         
@@ -314,13 +294,12 @@ def generate_solution_with_groq(ticket_data: Dict, similar_tickets: List[Dict]) 
         groq_api_key = os.getenv("GROQ_API_KEY")
         
         if not groq_api_key:
-            return ("Unable to generate root cause analysis. GROQ_API_KEY not found in environment variables.", 
-                    "Unable to generate resolution steps. Please set GROQ_API_KEY in your .env file.")
-        
+            return "Unable to generate root cause analysis. GROQ_API_KEY not found in environment variables."
+  
         # Initialize Groq LLM (open-source model) with explicit API key
         llm = ChatGroq(
             model="llama-3.3-70b-versatile",  # Open-source Llama model via Groq
-            temperature=0.0,
+            temperature=0.1,
             api_key=groq_api_key  # Explicitly pass the API key
         )
         
@@ -404,24 +383,6 @@ RESOLUTION: <your step-by-step solution here>
             return (f"Unable to generate root cause analysis. Error: {error_msg}", 
                     f"Unable to generate resolution steps. Please investigate manually. Error: {error_msg}")
 
-# ===================== ROOT ENDPOINT =====================
-@app.get("/", tags=["Health Check"])
-async def root():
-    """
-    Root endpoint to check if API is running.
-    
-    Returns:
-        Dict: Welcome message and API status
-    """
-    return {
-        "message": "Weaviate Vector DB API is running",
-        "status": "active",
-        "endpoints": {
-            "health": "/health",
-            "document_count": "/api/v1/collections/{collection_name}/count",
-            "collections": "/api/v1/collections"
-        }
-    }
 
 # ===================== HEALTH CHECK ENDPOINT =====================
 @app.get("/health", tags=["Health Check"])
@@ -1178,7 +1139,7 @@ async def get_all_tickets(limit: int = 100, offset: int = 0, collection_name: Op
 
 # ===================== SEARCH TICKETS ENDPOINT =====================
 @app.get("/api/v1/tickets/search", tags=["Tickets"])
-async def search_tickets(query: str, limit: int = 5, collection_name: Optional[str] = None):
+async def search_tickets(query: str, limit: int = 3, collection_name: Optional[str] = None):
     """
     Search for similar tickets using vector similarity search with local embeddings.
     
