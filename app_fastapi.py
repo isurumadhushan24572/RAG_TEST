@@ -924,23 +924,22 @@ async def upload_tickets_batch(tickets: List[TicketModel], collection_name: Opti
         )
 
 # ===================== SUBMIT TICKET WITH AI SOLUTION ENDPOINT =====================
-@app.post("/api/v1/tickets/submit-with-ai", tags=["Tickets"], response_model=AITicketResponse)
+@app.post("/api/v1/tickets/submit-user-input", tags=["Tickets"], response_model=AITicketResponse)
 async def submit_ticket_with_ai_solution(ticket: TicketSubmissionModel):
     """
-    Submit a new ticket and get AI-generated solution using Groq's open-source LLM.
+    Get AI-generated solution for a ticket using Groq's open-source LLM.
     This endpoint uses RAG (Retrieval-Augmented Generation) to find similar tickets and generate solutions.
     
     Workflow:
     1. Search vector DB for similar past incidents (85% similarity threshold)
     2. Generate AI solution using Groq's Llama model based on similar tickets
-    3. Save ticket to the specified collection with AI-generated solution
-    4. Return reasoning, solution, and similar tickets found
+    3. Return reasoning, solution, and similar tickets found (WITHOUT saving to DB)
     
     Args:
         ticket: TicketSubmissionModel with incident details
         
     Returns:
-        AITicketResponse: Ticket ID, status, AI reasoning, solution, and similar tickets
+        AITicketResponse: Generated ticket ID, status, AI reasoning, solution, and similar tickets
         
     Raises:
         HTTPException: If Weaviate is not connected or processing fails
@@ -994,45 +993,19 @@ async def submit_ticket_with_ai_solution(ticket: TicketSubmissionModel):
         
         if has_error:
             status_value = "Open"
-            message = "AI generation failed. Ticket marked as Open for manual review."
+            message = "AI generation failed. Manual review recommended."
         elif not has_similar_tickets:
             status_value = "Open"
-            message = "No similar incidents found (85% threshold). Ticket marked as Open for expert validation."
+            message = "No similar incidents found (85% threshold). Expert validation recommended."
         else:
             status_value = "Resolved"
-            message = f"AI-generated solution based on {len(similar_tickets)} similar incident(s). Ticket marked as Resolved."
+            message = f"AI-generated solution based on {len(similar_tickets)} similar incident(s)."
         
-        # Step 5: Generate ticket ID and save to collection
+        # Step 5: Generate temporary ticket ID (not saved to DB)
         collection = weaviate_client.collections.get(target_collection)
         count_result = collection.aggregate.over_all(total_count=True)
         ticket_count = count_result.total_count
-        ticket_id = f"TKT-{ticket_count + 1:04d}"
-        
-        # Prepare full ticket data with AI solution
-        full_ticket_data = {
-            "ticket_id": ticket_id,
-            "title": ticket.title,
-            "description": ticket.description,
-            "category": ticket.category,
-            "status": status_value,
-            "severity": ticket.severity,
-            "application": ticket.application,
-            "affected_users": ticket.affected_users,
-            "environment": ticket.environment,
-            "solution": solution,
-            "reasoning": reasoning,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        # Generate embedding from ticket content
-        text_to_embed = f"{ticket.title} {ticket.description} {solution}"
-        embedding = generate_embedding(text_to_embed)
-        
-        # Insert ticket into Weaviate with embedding
-        uuid = collection.data.insert(
-            properties=full_ticket_data,
-            vector=embedding
-        )
+        ticket_id = f"TKT-PREVIEW-{ticket_count + 1:04d}"
         
         # Step 6: Format similar tickets for response
         similar_tickets_response = [
@@ -1047,7 +1020,7 @@ async def submit_ticket_with_ai_solution(ticket: TicketSubmissionModel):
             for st in similar_tickets
         ]
         
-        # Return response
+        # Return response (ticket NOT saved to database)
         return AITicketResponse(
             success=True,
             ticket_id=ticket_id,
@@ -1055,7 +1028,7 @@ async def submit_ticket_with_ai_solution(ticket: TicketSubmissionModel):
             reasoning=reasoning,
             solution=solution,
             similar_tickets=similar_tickets_response,
-            message=message
+            message=f"{message} Note: Ticket not saved to database."
         )
         
     except HTTPException:
