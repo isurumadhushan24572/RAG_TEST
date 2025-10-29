@@ -566,115 +566,115 @@ async def list_collections():
             detail=f"Error listing collections: {str(e)}"
         )
 
+# # ===================== CREATE COLLECTION ENDPOINT =====================
+# @app.post("/api/v1/collections", tags=["Collections"])
+# async def create_collection(collection_model: CreateCollectionModel):
+#     """
+#     Create a new collection in Weaviate with custom schema.
+    
+#     Args:
+#         collection_model: CreateCollectionModel with collection name, description, and properties
+        
+#     Returns:
+#         Dict: Success status and collection details
+        
+#     Raises:
+#         HTTPException: If collection creation fails or already exists
+#     """
+#     global weaviate_client
+    
+#     try:
+#         # Check if Weaviate client is initialized
+#         if weaviate_client is None:
+#             raise HTTPException(
+#                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+#                 detail="Weaviate client not initialized. Check if Weaviate is running."
+#             )
+        
+#         # Check if collection already exists
+#         if weaviate_client.collections.exists(collection_model.name):
+#             raise HTTPException(
+#                 status_code=status.HTTP_409_CONFLICT,
+#                 detail=f"Collection '{collection_model.name}' already exists"
+#             )
+        
+#         # Map string data types to Weaviate DataType enums
+#         data_type_mapping = {
+#             "TEXT": DataType.TEXT,
+#             "NUMBER": DataType.NUMBER,
+#             "INT": DataType.INT,
+#             "BOOLEAN": DataType.BOOL,
+#             "DATE": DataType.DATE,
+#             "UUID": DataType.UUID,
+#             "TEXT_ARRAY": DataType.TEXT_ARRAY,
+#             "NUMBER_ARRAY": DataType.NUMBER_ARRAY,
+#             "INT_ARRAY": DataType.INT_ARRAY,
+#             "BOOLEAN_ARRAY": DataType.BOOL_ARRAY,
+#             "DATE_ARRAY": DataType.DATE_ARRAY,
+#             "UUID_ARRAY": DataType.UUID_ARRAY,
+#         }
+        
+#         # Build properties list
+#         properties = []
+#         for prop in collection_model.properties:
+#             # Validate data type
+#             data_type_upper = prop.data_type.upper()
+#             if data_type_upper not in data_type_mapping:
+#                 raise HTTPException(
+#                     status_code=status.HTTP_400_BAD_REQUEST,
+#                     detail=f"Invalid data type '{prop.data_type}'. Supported types: {', '.join(data_type_mapping.keys())}"
+#                 )
+            
+#             # Create property
+#             properties.append(
+#                 Property(
+#                     name=prop.name,
+#                     data_type=data_type_mapping[data_type_upper],
+#                     description=prop.description or f"Property: {prop.name}"
+#                 )
+#             )
+        
+#         # Create collection with or without vectorizer
+#         vectorizer_config = wvc.config.Configure.Vectorizer.none() if not collection_model.use_vectorizer else None
+        
+#         weaviate_client.collections.create(
+#             name=collection_model.name,
+#             description=collection_model.description or f"Custom collection: {collection_model.name}",
+#             vectorizer_config=vectorizer_config,
+#             properties=properties
+#         )
+        
+#         return {
+#             "success": True,
+#             "message": f"Collection '{collection_model.name}' created successfully",
+#             "collection": {
+#                 "name": collection_model.name,
+#                 "description": collection_model.description,
+#                 "properties_count": len(properties),
+#                 "vectorizer": "manual/local" if not collection_model.use_vectorizer else "automatic",
+#                 "properties": [
+#                     {
+#                         "name": prop.name,
+#                         "data_type": prop.data_type,
+#                         "description": prop.description
+#                     } for prop in collection_model.properties
+#                 ]
+#             }
+#         }
+        
+#     except HTTPException:
+#         # Re-raise HTTP exceptions
+#         raise
+#     except Exception as e:
+#         # Handle any other errors during collection creation
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Error creating collection: {str(e)}"
+#         )
+
 # ===================== CREATE COLLECTION ENDPOINT =====================
 @app.post("/api/v1/collections", tags=["Collections"])
-async def create_collection(collection_model: CreateCollectionModel):
-    """
-    Create a new collection in Weaviate with custom schema.
-    
-    Args:
-        collection_model: CreateCollectionModel with collection name, description, and properties
-        
-    Returns:
-        Dict: Success status and collection details
-        
-    Raises:
-        HTTPException: If collection creation fails or already exists
-    """
-    global weaviate_client
-    
-    try:
-        # Check if Weaviate client is initialized
-        if weaviate_client is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Weaviate client not initialized. Check if Weaviate is running."
-            )
-        
-        # Check if collection already exists
-        if weaviate_client.collections.exists(collection_model.name):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Collection '{collection_model.name}' already exists"
-            )
-        
-        # Map string data types to Weaviate DataType enums
-        data_type_mapping = {
-            "TEXT": DataType.TEXT,
-            "NUMBER": DataType.NUMBER,
-            "INT": DataType.INT,
-            "BOOLEAN": DataType.BOOL,
-            "DATE": DataType.DATE,
-            "UUID": DataType.UUID,
-            "TEXT_ARRAY": DataType.TEXT_ARRAY,
-            "NUMBER_ARRAY": DataType.NUMBER_ARRAY,
-            "INT_ARRAY": DataType.INT_ARRAY,
-            "BOOLEAN_ARRAY": DataType.BOOL_ARRAY,
-            "DATE_ARRAY": DataType.DATE_ARRAY,
-            "UUID_ARRAY": DataType.UUID_ARRAY,
-        }
-        
-        # Build properties list
-        properties = []
-        for prop in collection_model.properties:
-            # Validate data type
-            data_type_upper = prop.data_type.upper()
-            if data_type_upper not in data_type_mapping:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid data type '{prop.data_type}'. Supported types: {', '.join(data_type_mapping.keys())}"
-                )
-            
-            # Create property
-            properties.append(
-                Property(
-                    name=prop.name,
-                    data_type=data_type_mapping[data_type_upper],
-                    description=prop.description or f"Property: {prop.name}"
-                )
-            )
-        
-        # Create collection with or without vectorizer
-        vectorizer_config = wvc.config.Configure.Vectorizer.none() if not collection_model.use_vectorizer else None
-        
-        weaviate_client.collections.create(
-            name=collection_model.name,
-            description=collection_model.description or f"Custom collection: {collection_model.name}",
-            vectorizer_config=vectorizer_config,
-            properties=properties
-        )
-        
-        return {
-            "success": True,
-            "message": f"Collection '{collection_model.name}' created successfully",
-            "collection": {
-                "name": collection_model.name,
-                "description": collection_model.description,
-                "properties_count": len(properties),
-                "vectorizer": "manual/local" if not collection_model.use_vectorizer else "automatic",
-                "properties": [
-                    {
-                        "name": prop.name,
-                        "data_type": prop.data_type,
-                        "description": prop.description
-                    } for prop in collection_model.properties
-                ]
-            }
-        }
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        # Handle any other errors during collection creation
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating collection: {str(e)}"
-        )
-
-# ===================== CREATE SIMPLE COLLECTION ENDPOINT =====================
-@app.post("/api/v1/collections/simple", tags=["Collections"])
-async def create_simple_collection(collection_name: str):
+async def create_collection(collection_name: str):
     """
     Create a new collection with default ticket schema by just providing a name.
     This is a simplified endpoint that creates a collection with predefined ticket properties.
