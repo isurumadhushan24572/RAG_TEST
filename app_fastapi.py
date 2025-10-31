@@ -27,6 +27,8 @@ embedding_model = None
 # Collection name for storing tickets
 TICKETS_COLLECTION_NAME = "SupportTickets"
 
+Embedding_Model = "all-mpnet-base-v2"
+
 # ===================== PYDANTIC MODELS =====================
 class TicketModel(BaseModel):
     """Pydantic model for ticket data validation"""
@@ -62,17 +64,6 @@ class CreateCollectionModel(BaseModel):
     description: Optional[str] = None
     properties: List[CollectionPropertyModel]
     use_vectorizer: bool = False  # Whether to use automatic vectorization
-
-class TicketSubmissionModel(BaseModel):
-    """Model for submitting a new ticket to get AI-generated solution"""
-    title: str
-    description: str
-    category: str
-    severity: str = "Medium"
-    application: str = ""
-    affected_users: str = ""
-    environment: str = "Production"
-    collection_name: Optional[str] = None  # Collection to search for similar tickets
 
 class AITicketResponse(BaseModel):
     """Response model for AI-generated ticket solution"""
@@ -117,8 +108,8 @@ async def lifespan(app: FastAPI):
     # STARTUP: Initialize Weaviate connection and embedding model
     try:
        
-        print("📦 Loading local embedding model (sentence-transformers/all-MiniLM-L6-v2)...")
-        embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        # Load local embedding model
+        embedding_model = SentenceTransformer(Embedding_Model)
         print("✅ Embedding model loaded successfully")
         
         # Connect to local Weaviate instance running on Docker
@@ -566,111 +557,6 @@ async def list_collections():
             detail=f"Error listing collections: {str(e)}"
         )
 
-# # ===================== CREATE COLLECTION ENDPOINT =====================
-# @app.post("/api/v1/collections", tags=["Collections"])
-# async def create_collection(collection_model: CreateCollectionModel):
-#     """
-#     Create a new collection in Weaviate with custom schema.
-    
-#     Args:
-#         collection_model: CreateCollectionModel with collection name, description, and properties
-        
-#     Returns:
-#         Dict: Success status and collection details
-        
-#     Raises:
-#         HTTPException: If collection creation fails or already exists
-#     """
-#     global weaviate_client
-    
-#     try:
-#         # Check if Weaviate client is initialized
-#         if weaviate_client is None:
-#             raise HTTPException(
-#                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-#                 detail="Weaviate client not initialized. Check if Weaviate is running."
-#             )
-        
-#         # Check if collection already exists
-#         if weaviate_client.collections.exists(collection_model.name):
-#             raise HTTPException(
-#                 status_code=status.HTTP_409_CONFLICT,
-#                 detail=f"Collection '{collection_model.name}' already exists"
-#             )
-        
-#         # Map string data types to Weaviate DataType enums
-#         data_type_mapping = {
-#             "TEXT": DataType.TEXT,
-#             "NUMBER": DataType.NUMBER,
-#             "INT": DataType.INT,
-#             "BOOLEAN": DataType.BOOL,
-#             "DATE": DataType.DATE,
-#             "UUID": DataType.UUID,
-#             "TEXT_ARRAY": DataType.TEXT_ARRAY,
-#             "NUMBER_ARRAY": DataType.NUMBER_ARRAY,
-#             "INT_ARRAY": DataType.INT_ARRAY,
-#             "BOOLEAN_ARRAY": DataType.BOOL_ARRAY,
-#             "DATE_ARRAY": DataType.DATE_ARRAY,
-#             "UUID_ARRAY": DataType.UUID_ARRAY,
-#         }
-        
-#         # Build properties list
-#         properties = []
-#         for prop in collection_model.properties:
-#             # Validate data type
-#             data_type_upper = prop.data_type.upper()
-#             if data_type_upper not in data_type_mapping:
-#                 raise HTTPException(
-#                     status_code=status.HTTP_400_BAD_REQUEST,
-#                     detail=f"Invalid data type '{prop.data_type}'. Supported types: {', '.join(data_type_mapping.keys())}"
-#                 )
-            
-#             # Create property
-#             properties.append(
-#                 Property(
-#                     name=prop.name,
-#                     data_type=data_type_mapping[data_type_upper],
-#                     description=prop.description or f"Property: {prop.name}"
-#                 )
-#             )
-        
-#         # Create collection with or without vectorizer
-#         vectorizer_config = wvc.config.Configure.Vectorizer.none() if not collection_model.use_vectorizer else None
-        
-#         weaviate_client.collections.create(
-#             name=collection_model.name,
-#             description=collection_model.description or f"Custom collection: {collection_model.name}",
-#             vectorizer_config=vectorizer_config,
-#             properties=properties
-#         )
-        
-#         return {
-#             "success": True,
-#             "message": f"Collection '{collection_model.name}' created successfully",
-#             "collection": {
-#                 "name": collection_model.name,
-#                 "description": collection_model.description,
-#                 "properties_count": len(properties),
-#                 "vectorizer": "manual/local" if not collection_model.use_vectorizer else "automatic",
-#                 "properties": [
-#                     {
-#                         "name": prop.name,
-#                         "data_type": prop.data_type,
-#                         "description": prop.description
-#                     } for prop in collection_model.properties
-#                 ]
-#             }
-#         }
-        
-#     except HTTPException:
-#         # Re-raise HTTP exceptions
-#         raise
-#     except Exception as e:
-#         # Handle any other errors during collection creation
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Error creating collection: {str(e)}"
-#         )
 
 # ===================== CREATE COLLECTION ENDPOINT =====================
 @app.post("/api/v1/collections", tags=["Collections"])
@@ -925,7 +811,7 @@ async def upload_tickets_batch(tickets: List[TicketModel], collection_name: Opti
 
 # ===================== SUBMIT TICKET WITH AI SOLUTION ENDPOINT =====================
 @app.post("/api/v1/tickets/submit-user-input", tags=["Tickets"], response_model=AITicketResponse)
-async def submit_ticket_with_ai_solution(ticket: TicketSubmissionModel):
+async def RAG_Response(ticket: TicketSubmissionModel):
     """
     This endpoint uses RAG (Retrieval-Augmented Generation) to find similar tickets and generate solutions.
     

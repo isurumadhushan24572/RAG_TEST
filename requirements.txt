@@ -8,6 +8,9 @@ uvicorn
 # Pydantic - Data validation using Python type hints
 pydantic
 
+# Pydantic Settings - For managing application settings
+pydantic_settings
+
 # ===================== WEAVIATE VECTOR DATABASE CLIENT =====================
 # Weaviate Python client v4 for vector database operations
 weaviate-client

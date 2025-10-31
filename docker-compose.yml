@@ -1,8 +1,8 @@
-# Docker Compose configuration for Weaviate Vector Database
-# This file sets up Weaviate to run locally on Docker
+# Docker Compose configuration for RAG Application with Weaviate Vector Database
+# Multi-container setup: FastAPI Application + Weaviate Vector DB
 
 services:
-  # Weaviate Vector Database Service
+  # ========== WEAVIATE VECTOR DATABASE SERVICE ==========
   weaviate:
     # Using the official Weaviate Docker image (latest version)
     image: semitechnologies/weaviate:latest
@@ -47,9 +47,82 @@ services:
     # This ensures data survives container restarts
     volumes:
       - weaviate_data:/var/lib/weaviate
+    
+    # Health check to ensure Weaviate is ready before starting dependent services
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    
+    # Network configuration
+    networks:
+      - rag_network
+
+  # ========== FASTAPI APPLICATION SERVICE ==========
+  fastapi_app:
+    # Build from local Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    # Container name
+    container_name: rag_fastapi_app
+    
+    # Restart policy
+    restart: always
+    
+    # Port mapping - FastAPI application
+    # Port 8000: API accessible at http://localhost:8000
+    ports:
+      - "8000:8000"
+    
+    # Load environment variables from .env file
+    env_file:
+      - .env
+    
+    # Environment variables for FastAPI app
+    environment:
+      # Weaviate connection - use service name instead of localhost
+      WEAVIATE_HOST: "weaviate"
+      WEAVIATE_PORT: "8080"
+      WEAVIATE_GRPC_PORT: "50051"
+      
+      # API configuration
+      API_PORT: "8000"
+      
+      # Groq API key - load from .env file
+      GROQ_API_KEY: ${GROQ_API_KEY}
+    
+    # Volume mapping - mount current directory for development
+    volumes:
+      - .:/app
+      - model_cache:/root/.cache/torch/sentence_transformers
+    
+    # Wait for Weaviate to be healthy before starting
+    depends_on:
+      weaviate:
+        condition: service_healthy
+    
+    # Network configuration
+    networks:
+      - rag_network
+    
+    # Command to run the application
+    command: uvicorn app_fastapi:app --host 0.0.0.0 --port 8000 --reload
 
 # Named volumes for data persistence
 volumes:
   # Volume to store Weaviate vector database data
   weaviate_data:
     driver: local
+  
+  # Volume to cache sentence-transformers models
+  model_cache:
+    driver: local
+
+# Network configuration
+networks:
+  rag_network:
+    driver: bridge
